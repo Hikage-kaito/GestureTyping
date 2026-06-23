@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+windows/
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Conda
+.conda/
+conda-meta/
+
+# MediaPipe / training artifacts
+exported_model*/
+*.task
+metadata.json
+checkpoint
+*.index
+*.data-*-of-*
+epoch_models/
+logs/
+
+# Sample and local datasets
+rps_data_sample/
+rps_data_sample.zip
+data/
+dataset/
+datasets/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log

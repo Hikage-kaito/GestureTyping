@@ -1,38 +1,54 @@
-// ジェスチャーの種類
-// 👍(Thumb_Up), 👎(Thumb_Down), ✌️(Victory), 
-// ☝️(Pointng_Up), ✊(Closed_Fist), 👋(Open_Palm), 
-// 🤟(ILoveYou)
-function getCode(left_gesture, right_gesture) {
-  let code_array = {
-    "Thumb_Up": 1,
-    "Thumb_Down": 2,
-    "Victory": 3,
-    "Pointing_Up": 4,
-    "Closed_Fist": 5,
-    "Open_Palm": 6,
+// ストーリー記憶配列（左手 = モード、右手 = 文字インデックス）
+// グローバルキー（優先判定）: 
+//   - 左手Zero && 右手Zero = backspace（最優先）
+//   - 右手Thumb = space（左手は問わない）
+// 文字マッピング: 左手モード × 右手インデックス
+function getCharacterFromGestures(leftGesture, rightGesture) {
+  // 最優先: 両手Zeroでbackspace
+  if (leftGesture === "Zero" && rightGesture === "Zero") {
+    return "BACK";  // Backキー（1文字取り消し）
   }
-  let left_code = code_array[left_gesture];
-  let right_code = code_array[right_gesture];
-  // left_codeとright_codeを文字として結合
-  let code = String(left_code) + String(right_code);
-  return code;
-}
 
-function getCharacter(code) {
-  const codeToChar = {
-    "11": "a", "12": "b", "13": "c", "14": "d", "15": "e", "16": "f",
-    "21": "g", "22": "h", "23": "i", "24": "j", "25": "k", "26": "l",
-    "31": "m", "32": "n", "33": "o", "34": "p", "35": "q", "36": "r",
-    "41": "s", "42": "t", "43": "u", "44": "v", "45": "w", "46": "x",
-    "51": "y", "52": "z", "53": " ", "54": "backspace"
+  // グローバルキー: 右手Thumbでspace（左手は問わない）
+  if (rightGesture === "Thumb") {
+    return " ";  // スペースキー
+  }
+
+  // 文字マッピング（左手モード × 右手インデックス）
+  // ※FiveとThumbの役割を入れ替え済み
+  const keymap = {
+    "Zero":   { "One": 't', "Two": 'h', "Three": 'e' },
+    "One":    { "One": 'q', "Two": 'u', "Three": 'i', "Four": 'c', "Five": 'k' },
+    "Two":    { "One": 'b', "Two": 'r', "Three": 'o', "Four": 'w', "Five": 'n' },
+    "Three":  { "One": 'f', "Two": 'x', "Three": 'j', "Four": 'm', "Five": 'p' },
+    "Four":   { "One": 's', "Two": 'v' },
+    "Five":   { "One": 'l', "Two": 'a', "Three": 'z', "Four": 'y' },
+    "Thumb":  { "One": 'd', "Two": 'g' }
   };
-  return codeToChar[code] || "";
+  
+  // 左手のモードが存在し、かつ右手の文字がマップに存在するかチェック
+  if (keymap[leftGesture] && keymap[leftGesture][rightGesture]) {
+    return keymap[leftGesture][rightGesture];
+  }
+  return "";
 }
 
 // 入力サンプル文章 
 let sample_texts = [
   "the quick brown fox jumps over the lazy dog",
 ];
+
+// グローバル変数：チャタリング防止用
+let lastChar = "";
+
+// グローバル変数：両手Zero時の連続backspace処理用
+let lastBackspaceTime = 0;  // 前回のbackspace実行時刻
+const BACKSPACE_INTERVAL = 500;  // 0.5秒 = 500ms
+
+// グローバル変数：ジェスチャー継続時間判定用
+let lastGestureSet = { left: "", right: "" };  // 前フレームのジェスチャーペア
+let gestureStartTime = 0;  // 現在のジェスチャーペアが認識され始めた時刻
+const GESTURE_HOLD_TIME = 200;  // 0.2秒 = 200ms
 
 // ゲームの状態を管理する変数
 // notready: ゲーム開始前 （カメラ起動前）
@@ -51,13 +67,10 @@ let cam = null;
 let p5canvas = null;
 
 function setup() {
-  p5canvas = createCanvas(320, 240);
+  p5canvas = createCanvas(200, 150);
   p5canvas.parent('#canvas');
 
   // When gestures are found, the following function is called. The detection results are stored in results.
-  let lastChar = "";
-  let lastCharTime = millis();
-
   gotGestures = function (results) {
     gestures_results = results;
 
@@ -69,29 +82,69 @@ function setup() {
         document.querySelector('input').value = ""; // 入力欄をクリア
         game_start_time = millis(); // ゲーム開始時間を記録
       }
-      let left_gesture;
-      let right_gesture;
-      if (results.handedness[0][0].categoryName == "Left") {
-        left_gesture = results.gestures[0][0].categoryName;
-        right_gesture = results.gestures[1][0].categoryName;
-      } else {
-        left_gesture = results.gestures[1][0].categoryName;
-        right_gesture = results.gestures[0][0].categoryName;
-      }
-      let code = getCode(left_gesture, right_gesture);
-      let c = getCharacter(code);
 
-      let now = millis();
-      if (c === lastChar) {
-        if (now - lastCharTime > 1000) {
-          // 1秒以上cが同じ値である場合の処理
-          typeChar(c);
-          lastCharTime = now;
-        }
+      // 左右の手を判定し、ジェスチャーを格納
+      let leftGesture = "None";
+      let rightGesture = "None";
+
+      // 最初の手がRightかLeftかを判定（画像左右反転のため逆転）
+      if (results.handedness[0][0].categoryName == "Right") {
+        leftGesture = results.gestures[0][0].categoryName;
+        rightGesture = results.gestures[1][0].categoryName;
       } else {
-        lastChar = c;
-        lastCharTime = now;
+        // 最初の手がLeftの場合、左右を入れ替える
+        leftGesture = results.gestures[1][0].categoryName;
+        rightGesture = results.gestures[0][0].categoryName;
       }
+
+      // ストーリー記憶配列に基づいて文字を取得
+      let currentChar = getCharacterFromGestures(leftGesture, rightGesture);
+
+      // ジェスチャーペアが変わったかチェック
+      const currentGestureSet = { left: leftGesture, right: rightGesture };
+      const gestureChanged = (lastGestureSet.left !== currentGestureSet.left) || 
+                             (lastGestureSet.right !== currentGestureSet.right);
+
+      if (gestureChanged) {
+        // ジェスチャーが変わった → 新しいジェスチャーの計測開始
+        lastGestureSet = currentGestureSet;
+        gestureStartTime = millis();
+      }
+
+      // 現在のジェスチャーが0.2秒以上継続しているかチェック
+      const currentTime = millis();
+      const gestureHoldDuration = currentTime - gestureStartTime;
+      const isGestureHeld = gestureHoldDuration >= GESTURE_HOLD_TIME;
+
+      if (isGestureHeld) {
+        // 特別処理1：左手Zero && 右手Zeroの場合、0.5秒ごとにbackspaceを実行
+        if (leftGesture === "Zero" && rightGesture === "Zero") {
+          if (currentTime - lastBackspaceTime >= BACKSPACE_INTERVAL) {
+            typeChar("BACK");
+            lastBackspaceTime = currentTime;
+          }
+        } 
+        // 特別処理2：左手Thumb && 右手Thumbの場合、0.5秒ごとにスペースを実行
+        else if (leftGesture === "Thumb" && rightGesture === "Thumb") {
+          if (currentTime - lastBackspaceTime >= BACKSPACE_INTERVAL) {
+            typeChar(" ");
+            lastBackspaceTime = currentTime;
+          }
+        } 
+        // 通常処理：それ以外の場合、1回だけ入力
+        else {
+          if (currentChar !== "" && currentChar !== lastChar) {
+            typeChar(currentChar);
+            lastChar = currentChar;
+          }
+        }
+      }
+    } else {
+      // 手が見切れた時、チャタリング防止とタイマーをリセット
+      lastChar = "";
+      lastBackspaceTime = 0;
+      lastGestureSet = { left: "", right: "" };
+      gestureStartTime = 0;
     }
 
   }
@@ -115,9 +168,12 @@ function typeChar(c) {
   document.querySelector('input').focus();
   // 入力欄に文字を追加または削除する関数
   const input = document.querySelector('input');
-  if (c === "backspace") {
+  
+  // BACK処理: 1文字取り消し
+  if (c === "BACK") {
     input.value = input.value.slice(0, -1);
   } else {
+    // 通常文字の追加
     input.value += c;
   }
 
@@ -187,7 +243,11 @@ function startWebcam() {
 function draw() {
   background(127);
   if (cam) {
+    push();
+    translate(width, 0);
+    scale(-1, 1);
     image(cam, 0, 0, width, height);
+    pop();
   }
   // 各頂点座標を表示する
   // 各頂点座標の位置と番号の対応は以下のURLを確認
@@ -198,7 +258,7 @@ function draw() {
         for (let landmark of landmarks) {
           noStroke();
           fill(100, 150, 210);
-          circle(landmark.x * width, landmark.y * height, 10);
+          circle(width - landmark.x * width, landmark.y * height, 10);
         }
       }
     }
@@ -212,7 +272,7 @@ function draw() {
       let score = gestures_results.gestures[i][0].score;
       let right_or_left = gestures_results.handednesses[i][0].hand;
       let pos = {
-        x: gestures_results.landmarks[i][0].x * width,
+        x: width - gestures_results.landmarks[i][0].x * width,
         y: gestures_results.landmarks[i][0].y * height,
       };
       textSize(20);
